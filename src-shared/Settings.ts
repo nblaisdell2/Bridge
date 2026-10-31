@@ -47,6 +47,13 @@ export interface Settings {
 	instrument: Instrument | null             // The instrument selected by default, or `null` for "Any Instrument"
 	difficulty: Difficulty | null             // The difficulty selected by default, or `null` for "Any Difficulty"
 	volume: number                            // The volume of the chart preview (0-100)
+	reviewInstrument: Instrument              // Review mode: the instrument a chart must have to be reviewed
+	reviewDifficulty: Difficulty              // Review mode: the difficulty a chart must have for `reviewInstrument`
+	reviewServerPort: number                  // Review mode: localhost port of the phone app server
+	reviewClipSeconds: number                 // Review mode: length of each preview clip
+	reviewClipBuffer: number                  // Review mode: how many clips to keep ready ahead of review
+	reviewAutoSync: boolean                   // Review mode: check Chorus for new charts on startup and daily
+	reviewAutoDownload: boolean               // Review mode: download kept songs as soon as they are kept
 }
 
 /**
@@ -69,4 +76,11 @@ export const defaultSettings: Settings = {
 	instrument: 'guitar',
 	difficulty: null,
 	volume: 50,
+	reviewInstrument: 'drums',
+	reviewDifficulty: 'expert',
+	reviewServerPort: 47823,
+	reviewClipSeconds: 30,
+	reviewClipBuffer: 600,
+	reviewAutoSync: true,
+	reviewAutoDownload: true,
 }

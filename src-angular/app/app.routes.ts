@@ -5,12 +5,14 @@ import { LibraryComponent } from './components/library/library.component'
 import { VideoSyncComponent } from './components/video-sync/video-sync.component'
 import { ArtStudioComponent } from './components/art-studio/art-studio.component'
 import { LyricsComponent } from './components/lyrics/lyrics.component'
+import { ReviewComponent } from './components/review/review.component'
 import { SettingsComponent } from './components/settings/settings.component'
 import { ToolsComponent } from './components/tools/tools.component'
 
 export const routes: Routes = [
 	{ path: 'browse', component: BrowseComponent, data: { shouldReuse: true } },
 	{ path: 'library', component: LibraryComponent, data: { shouldReuse: true } },
+	{ path: 'review', component: ReviewComponent, data: { shouldReuse: true } },
 	{ path: 'video-sync', component: VideoSyncComponent, data: { shouldReuse: true } },
 	{ path: 'art-studio', component: ArtStudioComponent, data: { shouldReuse: true } },
 	{ path: 'lyrics', component: LyricsComponent, data: { shouldReuse: true } },

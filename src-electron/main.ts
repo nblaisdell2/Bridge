@@ -6,6 +6,7 @@ import * as url from 'url'
 
 import { IpcFromMainEmitEvents } from '../src-shared/interfaces/ipc.interface.js'
 import { dataPath } from '../src-shared/Paths.js'
+import { initReview, shutdownReview } from './ipc/review/ReviewHandler.ipc.js'
 import { settings } from './ipc/SettingsHandler.ipc.js'
 import { retryUpdate } from './ipc/UpdateHandler.ipc.js'
 import { getIpcInvokeHandlers, getIpcToMainEmitHandlers } from './IpcHandler.js'
@@ -27,6 +28,7 @@ app.on('ready', async () => {
 		retryUpdate()
 	}
 })
+app.on('before-quit', () => shutdownReview())
 
 /**
  * Only allow a single Bridge window to be open at any one time.
@@ -99,6 +101,9 @@ async function createBridgeWindow() {
 
 	// Load angular app
 	await loadWindow()
+
+	// Review mode: phone app server, clip buffer, and scheduled catalog sync
+	initReview()
 
 	if (isDevBuild) {
 		mainWindow.webContents.openDevTools()

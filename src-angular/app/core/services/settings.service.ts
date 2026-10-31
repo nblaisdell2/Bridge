@@ -266,6 +266,27 @@ export class SettingsService {
 		this._settings.update(s => ({ ...s!, volume: value }))
 		this.saveSettings()
 	}
+
+	// Review mode
+	get reviewAutoSync() {
+		return this.settings.reviewAutoSync
+	}
+	set reviewAutoSync(value: boolean) {
+		this._settings.update(s => ({ ...s!, reviewAutoSync: value }))
+		this.saveSettings()
+	}
+
+	get reviewAutoDownload() {
+		return this.settings.reviewAutoDownload
+	}
+	set reviewAutoDownload(value: boolean) {
+		this._settings.update(s => ({ ...s!, reviewAutoDownload: value }))
+		this.saveSettings()
+	}
+
+	get reviewServerPort() {
+		return this.settings.reviewServerPort
+	}
 }
 
 function setThemeColors(themeColors: ThemeColors) {

@@ -833,6 +833,13 @@ class CatalogDatabase {
 		stmt.run(hasLyrics ? 1 : 0, chartId)
 	}
 
+	/**
+	 * Get the artist and name of every chart in the library (used by Review mode to skip owned songs)
+	 */
+	getArtistNamePairs(): Array<{ artist: string; name: string }> {
+		return this.db.prepare('SELECT artist, name FROM charts').all() as Array<{ artist: string; name: string }>
+	}
+
 	getSetting(key: string): string | null {
 		const row = this.db.prepare('SELECT value FROM catalog_settings WHERE key = ?').get(key) as { value: string } | undefined
 		return row?.value ?? null

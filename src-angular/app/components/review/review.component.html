@@ -1,0 +1,250 @@
+<div class="flex-1 min-h-0 overflow-y-auto p-6">
+	<div class="max-w-6xl mx-auto flex flex-col gap-6">
+		<div>
+			<h1 class="text-2xl font-bold">Review</h1>
+			<p class="text-base-content/70">
+				Listen to a short clip of every Expert-drums song on Chorus Encore, then keep or skip it.
+				Kept songs are downloaded to your library automatically.
+			</p>
+		</div>
+
+		<!-- Stats -->
+		@if (stats(); as s) {
+			<div class="stats stats-vertical sm:stats-horizontal bg-base-200 shadow">
+				<div class="stat">
+					<div class="stat-title">Left to review</div>
+					<div class="stat-value text-3xl">{{ s.pending.toLocaleString() }}</div>
+					<div class="stat-desc">{{ s.clipsReady.toLocaleString() }} clips ready · {{ s.total.toLocaleString() }} songs total</div>
+				</div>
+				<div class="stat">
+					<div class="stat-title">Kept</div>
+					<div class="stat-value text-3xl text-success">{{ s.keep.toLocaleString() }}</div>
+					<div class="stat-desc">
+						{{ s.downloaded.toLocaleString() }} downloaded · {{ s.downloadQueued.toLocaleString() }} queued
+						@if (s.downloadFailed) {
+							· <span class="text-error">{{ s.downloadFailed }} failed</span>
+						}
+					</div>
+				</div>
+				<div class="stat">
+					<div class="stat-title">Skipped</div>
+					<div class="stat-value text-3xl">{{ s.skip.toLocaleString() }}</div>
+					<div class="stat-desc">{{ s.owned.toLocaleString() }} already in your library</div>
+				</div>
+				<div class="stat">
+					<div class="stat-title">Last sync</div>
+					<div class="stat-value text-lg">{{ s.lastSyncAt ? (s.lastSyncAt | date: 'medium') : 'Never' }}</div>
+					<div class="stat-desc">{{ settingsService.reviewAutoSync ? 'Checks for new charts daily' : 'Automatic sync is off' }}</div>
+				</div>
+			</div>
+		}
+
+		<!-- Sync & downloads -->
+		<div class="card bg-base-200 shadow">
+			<div class="card-body gap-4">
+				<h2 class="card-title">Songs</h2>
+				@if (stats()?.total === 0 && !syncRunning) {
+					<div class="alert alert-info">
+						<i class="bi bi-info-circle"></i>
+						<span>Start by importing the catalog from Chorus Encore. This takes about two minutes and then runs in the background.</span>
+					</div>
+				}
+				<div class="flex flex-wrap gap-2">
+					<button class="btn btn-primary" (click)="sync()" [disabled]="syncRunning">
+						@if (syncRunning) {
+							<span class="loading loading-spinner loading-sm"></span>
+						}
+						{{ stats()?.total ? 'Check for new charts' : 'Import catalog' }}
+					</button>
+					<button class="btn" (click)="downloadKept()" [disabled]="!stats()?.keep">Download kept songs</button>
+					<button class="btn btn-ghost" (click)="checkOwned()">Skip songs already in my library</button>
+				</div>
+
+				@if (syncProgress(); as progress) {
+					<div class="flex flex-col gap-1">
+						<span [class.text-error]="progress.error">{{ progress.message }}{{ progress.error ? ': ' + progress.error : '' }}</span>
+						@if (!progress.finished && percent(progress) !== null) {
+							<progress class="progress progress-primary w-full" [value]="percent(progress)" max="100"></progress>
+						}
+					</div>
+				}
+				@if (clipProgress(); as progress) {
+					<div class="flex flex-col gap-1">
+						<span class="text-sm text-base-content/70">{{ progress.message }}</span>
+						@if (percent(progress) !== null && percent(progress)! < 100) {
+							<progress class="progress progress-success w-full" [value]="percent(progress)" max="100"></progress>
+						}
+					</div>
+				}
+				@if (downloadMessage()) {
+					<span class="text-sm text-base-content/70">{{ downloadMessage() }}</span>
+				}
+
+				<div class="flex flex-wrap gap-6">
+					<label class="label cursor-pointer gap-3">
+						<input type="checkbox" class="toggle toggle-primary" [checked]="settingsService.reviewAutoSync" (change)="setAutoSync($any($event.target).checked)" />
+						<span>Check for new charts on startup and daily</span>
+					</label>
+					<label class="label cursor-pointer gap-3">
+						<input type="checkbox" class="toggle toggle-primary" [checked]="settingsService.reviewAutoDownload" (change)="setAutoDownload($any($event.target).checked)" />
+						<span>Download songs as soon as I keep them</span>
+					</label>
+				</div>
+			</div>
+		</div>
+
+		<!-- Review here -->
+		<div class="card bg-base-200 shadow">
+			<div class="card-body gap-4">
+				<div class="flex items-center justify-between gap-4">
+					<div>
+						<h2 class="card-title">Review on this PC</h2>
+						<p class="text-sm text-base-content/70">Arrow keys: → keep, ← skip, ↓ later, Z undo, Space play/pause.</p>
+					</div>
+					<button class="btn" (click)="togglePlayer()" [disabled]="!serverInfo()?.running">{{ showPlayer() ? 'Close player' : 'Open player' }}</button>
+				</div>
+				@if (showPlayer() && playerUrl()) {
+					<iframe class="w-full rounded-box bg-black" style="height: 760px" [src]="playerUrl()" allow="autoplay" title="Review player"></iframe>
+				}
+			</div>
+		</div>
+
+		<!-- Phone setup -->
+		<div class="card bg-base-200 shadow">
+			<div class="card-body gap-4">
+				<h2 class="card-title">Review on your phone (works offline)</h2>
+				@if (serverInfo(); as info) {
+					@if (info.error) {
+						<div class="alert alert-error"><i class="bi bi-exclamation-triangle"></i><span>{{ info.error }}</span></div>
+					}
+					<div class="flex flex-col lg:flex-row gap-6">
+						<ol class="list-decimal list-inside flex flex-col gap-2 flex-1">
+							<li>
+								Install <a class="link link-primary" (click)="openUrl('https://tailscale.com/download')">Tailscale</a>
+								on this PC and on your phone, and sign in to the same account on both.
+								@if (info.tailscaleInstalled) {
+									<span class="badge badge-success badge-sm">Installed here</span>
+								}
+							</li>
+							<li>
+								Share Bridge with your phone over HTTPS:
+								<button class="btn btn-sm ml-2" (click)="setUpTailscale()" [disabled]="!info.tailscaleInstalled || settingUpTailscale()">
+									@if (settingUpTailscale()) {
+										<span class="loading loading-spinner loading-xs"></span>
+									}
+									Set up phone access
+								</button>
+								<div class="text-xs text-base-content/60 mt-1">
+									This runs <code>tailscale serve --bg {{ info.port }}</code>. If Tailscale asks you to enable HTTPS certificates, follow the link it shows, then click again.
+								</div>
+								@if (tailscaleOutput()) {
+									<pre class="text-xs bg-base-300 rounded p-2 mt-2 whitespace-pre-wrap select-text">{{ tailscaleOutput() }}</pre>
+								}
+							</li>
+							<li>
+								On your phone, open
+								@if (info.tailscaleUrl) {
+									<span class="font-mono select-text">{{ info.tailscaleUrl }}</span>
+								} @else {
+									your PC's Tailscale address
+								}
+								and choose <b>Add to Home Screen</b>.
+							</li>
+							<li>Open the app from your home screen, tap the sync button, and download a batch of songs. You can then review with no connection; your choices are sent to Bridge the next time the phone can reach this PC.</li>
+						</ol>
+						@if (info.qrDataUrl) {
+							<div class="flex flex-col items-center gap-2">
+								<img [src]="info.qrDataUrl" alt="QR code for the phone app" class="rounded bg-white p-2 w-48 h-48" />
+								<span class="text-xs text-base-content/60">Scan with your phone camera</span>
+							</div>
+						}
+					</div>
+					<div class="text-xs text-base-content/60">
+						Server: {{ info.running ? 'running on ' + info.localUrl : 'not running' }}. Bridge must be open for the phone to sync.
+					</div>
+				}
+			</div>
+		</div>
+
+		<!-- Song list -->
+		<div class="card bg-base-200 shadow">
+			<div class="card-body gap-4">
+				<div class="flex flex-wrap items-center justify-between gap-4">
+					<div role="tablist" class="tabs tabs-box">
+						@for (tab of [['keep', 'Kept'], ['skip', 'Skipped'], ['pending', 'To review'], ['owned', 'In library'], ['all', 'All']]; track tab[0]) {
+							<a role="tab" class="tab" [class.tab-active]="statusFilter() === tab[0]" (click)="setStatusFilter($any(tab[0]))">{{ tab[1] }}</a>
+						}
+					</div>
+					<input type="search" class="input input-sm w-64" placeholder="Search artist, song, charter..." [ngModel]="search()" (ngModelChange)="onSearchChange($event)" />
+				</div>
+
+				<div class="overflow-x-auto">
+					<table class="table table-sm">
+						<thead>
+							<tr>
+								<th>Song</th>
+								<th>Artist</th>
+								<th>Charts</th>
+								<th>Status</th>
+								<th>Download</th>
+								<th></th>
+							</tr>
+						</thead>
+						<tbody>
+							@for (song of songs(); track song.songKey) {
+								<tr>
+									<td class="max-w-64 truncate" [title]="song.name">{{ song.name }}</td>
+									<td class="max-w-48 truncate" [title]="song.artist">{{ song.artist }}</td>
+									<td class="max-w-48 truncate text-base-content/70" [title]="song.charters">{{ song.chartCount }} · {{ song.charters }}</td>
+									<td>
+										<span class="badge badge-sm"
+											[class.badge-success]="song.status === 'keep'"
+											[class.badge-error]="song.status === 'skip'"
+											[class.badge-info]="song.status === 'owned'">
+											{{ song.status === 'keep' ? 'Kept' : song.status === 'skip' ? 'Skipped' : song.status === 'owned' ? 'In library' : 'To review' }}
+										</span>
+									</td>
+									<td [title]="song.downloadError ?? ''">
+										@switch (song.downloadStatus) {
+											@case ('done') { <span class="text-success">Downloaded</span> }
+											@case ('queued') { <span>Queued</span> }
+											@case ('error') { <span class="text-error">Failed</span> }
+											@default { <span class="text-base-content/40">—</span> }
+										}
+									</td>
+									<td class="text-right whitespace-nowrap">
+										@if (song.status !== 'owned') {
+											@if (song.status !== 'keep') {
+												<button class="btn btn-xs btn-ghost text-success" (click)="setDecision(song, 'keep')">Keep</button>
+											}
+											@if (song.status !== 'skip') {
+												<button class="btn btn-xs btn-ghost text-error" (click)="setDecision(song, 'skip')">Skip</button>
+											}
+											@if (song.status !== 'pending') {
+												<button class="btn btn-xs btn-ghost" (click)="setDecision(song, 'pending')">Review again</button>
+											}
+										}
+									</td>
+								</tr>
+							} @empty {
+								<tr><td colspan="6" class="text-center text-base-content/60 py-6">No songs here yet.</td></tr>
+							}
+						</tbody>
+					</table>
+				</div>
+
+				@if (songTotal() > pageSize) {
+					<div class="flex items-center justify-end gap-3">
+						<span class="text-sm text-base-content/70">
+							{{ page() * pageSize + 1 }}–{{ Math.min((page() + 1) * pageSize, songTotal()) }} of {{ songTotal().toLocaleString() }}
+						</span>
+						<div class="join">
+							<button class="join-item btn btn-sm" (click)="changePage(-1)" [disabled]="page() === 0">‹</button>
+							<button class="join-item btn btn-sm" (click)="changePage(1)" [disabled]="(page() + 1) * pageSize >= songTotal()">›</button>
+						</div>
+					</div>
+				}
+			</div>
+		</div>
+	</div>
+</div>

@@ -77,6 +77,15 @@ const electronApi: ContextBridgeApi = {
 		lyricsCheckChart: getInvoker('lyricsCheckChart'),
 		lyricsDelete: getInvoker('lyricsDelete'),
 		lyricsGetAudioPath: getInvoker('lyricsGetAudioPath'),
+		// Review
+		reviewGetStats: getInvoker('reviewGetStats'),
+		reviewSync: getInvoker('reviewSync'),
+		reviewCheckOwned: getInvoker('reviewCheckOwned'),
+		reviewDownloadKept: getInvoker('reviewDownloadKept'),
+		reviewListSongs: getInvoker('reviewListSongs'),
+		reviewSetDecision: getInvoker('reviewSetDecision'),
+		reviewGetServerInfo: getInvoker('reviewGetServerInfo'),
+		reviewSetupTailscale: getInvoker('reviewSetupTailscale'),
 	},
 	emit: {
 		download: getEmitter('download'),
@@ -115,6 +124,8 @@ const electronApi: ContextBridgeApi = {
 		artDownloadProgress: getListenerAdder('artDownloadProgress'),
 		// Lyrics
 		lyricsProgress: getListenerAdder('lyricsProgress'),
+		// Review
+		reviewProgress: getListenerAdder('reviewProgress'),
 	},
 }
 

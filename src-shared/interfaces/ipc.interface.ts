@@ -6,6 +6,9 @@ import { CatalogFilter, CatalogStats, ChartRecord, ScanProgress, ScanResult } fr
 import { VideoDownloadOptions, VideoDownloadProgress, YouTubeSearchResult } from './video-sync.interface.js'
 import { AlbumArtResult, ArtDownloadOptions, ArtDownloadProgress, BackgroundGenerateOptions, ChartArtMatch } from './art-studio.interface.js'
 import { LyricsSearchResult, ChartLyricsMatch, LyricsDownloadProgress } from './lyrics.interface.js'
+import {
+	ReviewDecision, ReviewProgress, ReviewServerInfo, ReviewSong, ReviewSongFilter, ReviewSongPage, ReviewStats,
+} from './review.interface.js'
 import { Download, DownloadProgress } from './download.interface.js'
 import { ThemeColors } from './theme.interface.js'
 import { UpdateProgress } from './update.interface.js'
@@ -245,6 +248,39 @@ export interface IpcInvokeEvents {
 		input: string
 		output: { dataUrl: string; vocalStartMs: number | null; hasVocalsTrack: boolean } | null
 	}
+	// Review
+	reviewGetStats: {
+		input: void
+		output: ReviewStats
+	}
+	reviewSync: {
+		input: void
+		output: ReviewStats
+	}
+	reviewCheckOwned: {
+		input: void
+		output: number
+	}
+	reviewDownloadKept: {
+		input: void
+		output: number
+	}
+	reviewListSongs: {
+		input: ReviewSongFilter
+		output: ReviewSongPage
+	}
+	reviewSetDecision: {
+		input: ReviewDecision
+		output: ReviewSong | null
+	}
+	reviewGetServerInfo: {
+		input: void
+		output: ReviewServerInfo
+	}
+	reviewSetupTailscale: {
+		input: void
+		output: { success: boolean; output: string }
+	}
 }
 
 export type IpcInvokeHandlers = {
@@ -300,6 +336,8 @@ export interface IpcFromMainEmitEvents {
 	artDownloadProgress: ArtDownloadProgress
 	// Lyrics
 	lyricsProgress: LyricsDownloadProgress
+	// Review
+	reviewProgress: ReviewProgress
 }
 
 export type IpcFromMainEmitHandlers = {

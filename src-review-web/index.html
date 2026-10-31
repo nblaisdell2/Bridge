@@ -1,0 +1,103 @@
+<!doctype html>
+<html lang="en">
+<head>
+	<meta charset="utf-8" />
+	<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+	<meta name="theme-color" content="#121212" />
+	<meta name="apple-mobile-web-app-capable" content="yes" />
+	<meta name="mobile-web-app-capable" content="yes" />
+	<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+	<meta name="apple-mobile-web-app-title" content="Bridge Review" />
+	<title>Bridge Review</title>
+	<link rel="manifest" href="manifest.webmanifest" />
+	<link rel="icon" href="icon-256.png" />
+	<link rel="apple-touch-icon" href="icon-256.png" />
+	<link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+	<header class="topbar">
+		<button id="undo" class="icon-button" title="Undo (Z)" aria-label="Undo last decision" disabled>
+			<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 14 4 9l5-5" /><path d="M4 9h10.5a5.5 5.5 0 0 1 0 11H11" /></svg>
+		</button>
+		<div class="counts">
+			<div id="offline-count" class="primary-count">0 songs ready</div>
+			<div id="server-count" class="secondary-count">Not synced yet</div>
+		</div>
+		<button id="open-sync" class="icon-button" title="Sync and download" aria-label="Sync and download songs">
+			<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M21 12a9 9 0 0 1-15.5 6.2L3 16" /><path d="M3 12a9 9 0 0 1 15.5-6.2L21 8" /><path d="M21 3v5h-5" /><path d="M3 21v-5h5" /></svg>
+			<span id="outbox-badge" class="badge" hidden>0</span>
+		</button>
+	</header>
+
+	<main class="stage">
+		<article id="card" class="card" hidden>
+			<div class="art-wrap">
+				<img id="art" class="art" alt="" />
+				<div id="art-fallback" class="art-fallback" hidden>♪</div>
+				<div class="swipe-label keep">KEEP</div>
+				<div class="swipe-label skip">SKIP</div>
+			</div>
+			<div class="meta">
+				<h1 id="song-name"></h1>
+				<h2 id="song-artist"></h2>
+				<p id="song-details"></p>
+				<p id="song-charts"></p>
+			</div>
+			<div class="player">
+				<button id="play" class="icon-button" title="Play / pause (Space)" aria-label="Play or pause">
+					<svg class="icon-play" viewBox="0 0 24 24" aria-hidden="true"><path d="M7 4v16l13-8z" /></svg>
+					<svg class="icon-pause" viewBox="0 0 24 24" aria-hidden="true"><path d="M7 4h4v16H7zM13 4h4v16h-4z" /></svg>
+				</button>
+				<div class="progress"><div id="progress-fill"></div></div>
+			</div>
+		</article>
+
+		<section id="empty" class="empty" hidden>
+			<div class="empty-icon">♪</div>
+			<h1 id="empty-title">No songs on this device</h1>
+			<p id="empty-body">Connect to your PC (through Tailscale) and download a batch of songs to review.</p>
+			<button id="empty-sync" class="primary-button">Sync &amp; download songs</button>
+		</section>
+	</main>
+
+	<footer class="actions">
+		<button id="skip" class="action skip" title="Skip (←)" aria-label="Skip">
+			<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M17 14V2M9 18.1 10 14H4.2a2 2 0 0 1-1.9-2.5l2.3-8A2 2 0 0 1 6.5 2H17v12l-4.5 8.6a1.9 1.9 0 0 1-3.5-1.5z" /></svg>
+		</button>
+		<button id="later" class="action later" title="Later (↓)" aria-label="Decide later">Later</button>
+		<button id="keep" class="action keep" title="Keep (→)" aria-label="Keep">
+			<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 10v12M15 5.9 14 10h5.8a2 2 0 0 1 1.9 2.5l-2.3 8a2 2 0 0 1-1.9 1.5H7V10l4.5-8.6A1.9 1.9 0 0 1 15 2.9z" /></svg>
+		</button>
+	</footer>
+
+	<div id="toast" class="toast" hidden>
+		<span id="toast-text"></span>
+		<button id="toast-undo" class="link-button">Undo</button>
+	</div>
+
+	<dialog id="sync-dialog" class="sheet">
+		<form method="dialog" class="sheet-body">
+			<h2>Sync with Bridge</h2>
+			<p id="sync-status" class="muted">Decisions are sent to your PC, and new songs are downloaded for offline review.</p>
+			<label class="field">
+				<span>Keep this many songs on the phone</span>
+				<select id="batch-size">
+					<option value="100">100 songs (~36 MB)</option>
+					<option value="300" selected>300 songs (~110 MB)</option>
+					<option value="500">500 songs (~180 MB)</option>
+					<option value="1000">1000 songs (~360 MB)</option>
+				</select>
+			</label>
+			<div id="sync-progress" class="sync-progress" hidden><div id="sync-progress-fill"></div></div>
+			<div class="sheet-actions">
+				<button id="sync-now" type="button" class="primary-button">Sync &amp; download</button>
+				<button value="close" class="secondary-button">Close</button>
+			</div>
+			<button id="clear-data" type="button" class="link-button danger">Remove downloaded songs from this phone</button>
+		</form>
+	</dialog>
+
+	<audio id="audio" preload="auto"></audio>
+	<script type="module" src="app.js"></script>
+</body>
+</html>

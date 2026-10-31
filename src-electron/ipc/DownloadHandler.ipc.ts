@@ -1,7 +1,7 @@
 import { Download } from '../../src-shared/interfaces/download.interface.js'
 import { DownloadQueue } from './download/DownloadQueue.js'
 
-const downloadQueue: DownloadQueue = new DownloadQueue()
+export const downloadQueue: DownloadQueue = new DownloadQueue()
 
 export async function download(data: Download) {
 	switch (data.action) {

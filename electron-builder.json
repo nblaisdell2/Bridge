@@ -6,6 +6,9 @@
 	"files": [
 		"dist/**/*"
 	],
+	"asarUnpack": [
+		"node_modules/ffmpeg-static/**"
+	],
 	"publish": {
 		"provider": "github",
 		"releaseType": "release"

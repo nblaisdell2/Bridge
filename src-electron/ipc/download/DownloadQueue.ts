@@ -1,5 +1,7 @@
 import { emitIpcEvent } from '../../main.js'
-import { ChartDownload } from './ChartDownload.js'
+import { ChartDownload, DownloadMessage } from './ChartDownload.js'
+
+export type DownloadOutcomeListener = (md5: string, outcome: { type: 'done'; destinationPath: string } | { type: 'error'; error: DownloadMessage }) => void
 
 export class DownloadQueue {
 
@@ -8,6 +10,14 @@ export class DownloadQueue {
 	private erroredQueue: ChartDownload[] = []
 
 	private downloadRunning = false
+	private outcomeListeners: DownloadOutcomeListener[] = []
+
+	/**
+	 * Registers `listener` to be called when any chart finishes downloading or fails.
+	 */
+	onOutcome(listener: DownloadOutcomeListener) {
+		this.outcomeListeners.push(listener)
+	}
 
 	private isChartInQueue(md5: string) {
 		if (this.downloadQueue.find(cd => cd.md5 === md5)) { return true }
@@ -48,6 +58,7 @@ export class DownloadQueue {
 				this.downloadQueue = this.downloadQueue.filter(cd => cd !== chartDownload)
 				this.erroredQueue.push(chartDownload)
 				this.downloadRunning = false
+				this.outcomeListeners.forEach(listener => listener(md5, { type: 'error', error: err }))
 				this.moveQueue()
 			})
 			chartDownload.on('end', destinationPath => {
@@ -63,6 +74,7 @@ export class DownloadQueue {
 
 				this.downloadQueue = this.downloadQueue.filter(cd => cd !== chartDownload)
 				this.downloadRunning = false
+				this.outcomeListeners.forEach(listener => listener(md5, { type: 'done', destinationPath }))
 				this.moveQueue()
 			})
 
