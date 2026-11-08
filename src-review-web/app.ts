@@ -940,10 +940,27 @@ function setUpControls() {
 
 // ---------- Startup ----------
 
+function setUpServiceWorker() {
+	if (!('serviceWorker' in navigator)) { return }
+	navigator.serviceWorker.register('sw.js').catch(err => console.warn('Service worker registration failed', err))
+
+	// A new version of the app has been fully downloaded and has taken over, so switch to it.
+	// (Nothing is being replaced the first time the app is installed.)
+	const isReplacingVersion = navigator.serviceWorker.controller !== null
+	navigator.serviceWorker.addEventListener('controllerchange', () => {
+		if (isReplacingVersion) { location.reload() }
+	})
+
+	// Browsers only look for a new version when a page loads, but phones mostly resume the app without reloading it
+	document.addEventListener('visibilitychange', () => {
+		if (document.visibilityState === 'visible') {
+			navigator.serviceWorker.getRegistration().then(registration => registration?.update()).catch(() => { /* Bridge is unreachable */ })
+		}
+	})
+}
+
 async function start() {
-	if ('serviceWorker' in navigator) {
-		navigator.serviceWorker.register('sw.js').catch(err => console.warn('Service worker registration failed', err))
-	}
+	setUpServiceWorker()
 	if (navigator.storage?.persist) {
 		navigator.storage.persist().catch(() => { /* Best effort */ })
 	}

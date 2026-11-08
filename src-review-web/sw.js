@@ -1,11 +1,19 @@
 // Bridge Review service worker: lets the phone app open and play downloaded songs with no connection.
 
-const SHELL_CACHE = 'bridge-review-shell-v2'
+// Replaced with a hash of the app's files by copy-static.js, so that every change to them installs as a new version
+const SHELL_VERSION = '__SHELL_VERSION__'
+const SHELL_CACHE = `bridge-review-shell-${SHELL_VERSION}`
 const MEDIA_CACHE = 'bridge-review-media' // Filled by app.js when songs are downloaded
 const SHELL_FILES = ['./', 'index.html', 'app.js', 'styles.css', 'manifest.webmanifest', 'icon-256.png', 'icon-512.png']
 
 self.addEventListener('install', event => {
-	event.waitUntil(caches.open(SHELL_CACHE).then(cache => cache.addAll(SHELL_FILES)).then(() => self.skipWaiting()))
+	// All or nothing, because the page, script, and styles only work with each other. If a file can't be downloaded,
+	// this version is discarded, the previous one keeps working, and the browser tries again the next time the app opens.
+	event.waitUntil(
+		caches.open(SHELL_CACHE)
+			.then(cache => cache.addAll(SHELL_FILES.map(file => new Request(file, { cache: 'reload' }))))
+			.then(() => self.skipWaiting())
+	)
 })
 
 self.addEventListener('activate', event => {
@@ -30,15 +38,6 @@ self.addEventListener('fetch', event => {
 	// The JSON API always needs Bridge
 	if (url.pathname.startsWith('/api/')) { return }
 
-	// App shell: answer from cache immediately (Bridge may be unreachable), refresh it in the background
-	event.respondWith(caches.open(SHELL_CACHE).then(async cache => {
-		const cached = await cache.match(request, { ignoreSearch: true })
-		const refresh = fetch(request)
-			.then(response => {
-				if (response.ok) { cache.put(request, response.clone()) }
-				return response
-			})
-			.catch(() => cached)
-		return cached ?? refresh
-	}))
+	// App shell: always this version's complete copy (Bridge may be unreachable). Updates arrive as a new version.
+	event.respondWith(caches.open(SHELL_CACHE).then(cache => cache.match(request, { ignoreSearch: true })).then(cached => cached ?? fetch(request)))
 })
