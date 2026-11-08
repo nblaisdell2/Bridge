@@ -104,10 +104,6 @@ async function createBridgeWindow() {
 
 	// Review mode: phone app server, clip buffer, and scheduled catalog sync
 	initReview()
-
-	if (isDevBuild) {
-		mainWindow.webContents.openDevTools()
-	}
 }
 
 /**
