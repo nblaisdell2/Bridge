@@ -12,7 +12,7 @@ import {
 } from '../../../src-shared/interfaces/review.interface.js'
 import { emitIpcEvent } from '../../main.js'
 import { settings } from '../SettingsHandler.ipc.js'
-import { cleanUpDecidedClips, ensureClipBuffer, stopClipService } from './ClipService.js'
+import { cleanUpDecidedClips, ensureClipBuffer, prioritizeArtistClips, stopClipService } from './ClipService.js'
 import { getReviewDb } from './ReviewDatabase.js'
 import { queueKeptDownloads, trackReviewDownloads } from './ReviewDownloads.js'
 import { getReviewServerState, isWebAppBuilt, startReviewServer, stopReviewServer } from './ReviewServer.js'
@@ -37,6 +37,7 @@ export function initReview() {
 	startReviewServer(settings.reviewServerPort, {
 		onDecisions: changed => afterDecisions(changed),
 		onNeedClips: readyCount => { ensureClipBuffer(reportProgress, readyCount).catch(logError) },
+		onNeedArtistClips: artistKey => { prioritizeArtistClips(reportProgress, artistKey).catch(logError) },
 	})
 
 	// Resume clip generation and any kept songs that weren't downloaded before Bridge last closed

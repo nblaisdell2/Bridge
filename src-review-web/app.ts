@@ -19,11 +19,30 @@ interface BatchSong {
 	charters: string
 	clipUrl: string
 	artUrl: string | null
+	artistKeys?: string[] // Missing on songs downloaded before artist mode existed
 }
 
 interface QueuedSong extends BatchSong {
 	order: number
 }
+
+interface Artist {
+	key: string
+	name: string
+	keptCount: number
+	pendingCount: number
+}
+
+interface BatchResponse {
+	songs: BatchSong[]
+	stats: Stats
+	artistPending?: number
+}
+
+type ReviewMode = 'random' | 'artist'
+type QueueName = 'queue' | 'artistQueue'
+/** Why the selected artist has no song to show */
+type ArtistNotice = 'loading' | 'preparing' | 'offline'
 
 interface Decision {
 	songKey: string
@@ -52,6 +71,8 @@ const REQUEST_TIMEOUT_MS = 15000
 const DOWNLOAD_CONCURRENCY = 4
 const QUIET_TOP_UP_SIZE = 50
 const SWIPE_THRESHOLD_PX = 110
+const ARTIST_BATCH_SIZE = 1000
+const ARTIST_POLL_MS = 4000
 
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T
 
@@ -68,6 +89,16 @@ const elements = {
 	empty: $<HTMLElement>('empty'),
 	emptyTitle: $<HTMLElement>('empty-title'),
 	emptyBody: $<HTMLElement>('empty-body'),
+	emptySync: $<HTMLButtonElement>('empty-sync'),
+	emptyArtists: $<HTMLButtonElement>('empty-artists'),
+	modeRandom: $<HTMLButtonElement>('mode-random'),
+	modeArtist: $<HTMLButtonElement>('mode-artist'),
+	modeArtistLabel: $<HTMLElement>('mode-artist-label'),
+	artistPicker: $<HTMLElement>('artist-picker'),
+	artistSearch: $<HTMLInputElement>('artist-search'),
+	artistHint: $<HTMLElement>('artist-hint'),
+	artistList: $<HTMLElement>('artist-list'),
+	actions: $<HTMLElement>('actions'),
 	offlineCount: $<HTMLElement>('offline-count'),
 	serverCount: $<HTMLElement>('server-count'),
 	outboxBadge: $<HTMLElement>('outbox-badge'),
@@ -77,6 +108,7 @@ const elements = {
 	later: $<HTMLButtonElement>('later'),
 	toast: $<HTMLElement>('toast'),
 	toastText: $<HTMLElement>('toast-text'),
+	toastUndo: $<HTMLButtonElement>('toast-undo'),
 	syncDialog: $<HTMLDialogElement>('sync-dialog'),
 	syncStatus: $<HTMLElement>('sync-status'),
 	syncProgress: $<HTMLElement>('sync-progress'),
@@ -87,8 +119,12 @@ const elements = {
 }
 
 let db: IDBDatabase
+/** The random queue */
 let queue: QueuedSong[] = []
-let undoStack: Array<{ song: QueuedSong; status: Decision['status'] }> = []
+/** Songs downloaded for artist mode, for any artist */
+let artistQueue: QueuedSong[] = []
+/** `artist` is who was being reviewed when the decision was made (null in random mode) */
+let undoStack: Array<{ song: QueuedSong; status: Decision['status']; artist: Artist | null }> = []
 let outboxCount = 0
 let stats: Stats | null = null
 let currentObjectUrls: string[] = []
@@ -96,23 +132,41 @@ let syncing = false
 let toastTimer: number | undefined
 let quietSyncTimer: number | undefined
 
+let mode: ReviewMode = 'random'
+let selectedArtist: Artist | null = null
+/** Artists that can be chosen, as of the last time Bridge was reached */
+let artists: Artist[] = []
+let pickerOpen = false
+let artistsReachable = true
+let artistNotice: ArtistNotice | null = null
+/** The artist whose songs are currently being requested from Bridge */
+let artistRequest: string | null = null
+let artistPollTimer: number | undefined
+/** The song loaded in the player */
+let shownSong: QueuedSong | null = null
+
 // ---------- IndexedDB ----------
 
 function openDb() {
 	return new Promise<IDBDatabase>((resolve, reject) => {
-		const request = indexedDB.open(DB_NAME, 1)
-		request.onupgradeneeded = () => {
+		const request = indexedDB.open(DB_NAME, 2)
+		request.onupgradeneeded = event => {
 			const database = request.result
-			database.createObjectStore('queue', { keyPath: 'songKey' })
-			database.createObjectStore('outbox', { keyPath: 'id', autoIncrement: true })
-			database.createObjectStore('meta', { keyPath: 'key' })
+			if (event.oldVersion < 1) {
+				database.createObjectStore('queue', { keyPath: 'songKey' })
+				database.createObjectStore('outbox', { keyPath: 'id', autoIncrement: true })
+				database.createObjectStore('meta', { keyPath: 'key' })
+			}
+			if (event.oldVersion < 2) {
+				database.createObjectStore('artistQueue', { keyPath: 'songKey' })
+			}
 		}
 		request.onsuccess = () => resolve(request.result)
 		request.onerror = () => reject(request.error)
 	})
 }
 
-function store(name: 'queue' | 'outbox' | 'meta', mode: IDBTransactionMode = 'readonly') {
+function store(name: QueueName | 'outbox' | 'meta', mode: IDBTransactionMode = 'readonly') {
 	return db.transaction(name, mode).objectStore(name)
 }
 
@@ -161,9 +215,10 @@ async function mediaUrl(url: string) {
 async function deleteMedia(song: BatchSong) {
 	if (!mediaCacheAvailable) { return }
 	const cache = await caches.open(MEDIA_CACHE)
-	await cache.delete(song.clipUrl)
+	const stored = storedSongs()
+	if (!stored.some(s => s.clipUrl === song.clipUrl)) { await cache.delete(song.clipUrl) }
 	// Album art is shared between songs of the same album, so only delete it when unused
-	if (song.artUrl && !queue.some(s => s.artUrl === song.artUrl) && !undoStack.some(u => u.song.artUrl === song.artUrl)) {
+	if (song.artUrl && !stored.some(s => s.artUrl === song.artUrl)) {
 		await cache.delete(song.artUrl)
 	}
 }
@@ -173,7 +228,7 @@ async function pruneMedia() {
 	if (!mediaCacheAvailable) { return }
 	const cache = await caches.open(MEDIA_CACHE)
 	const keep = new Set<string>()
-	for (const song of [...queue, ...undoStack.map(u => u.song)]) {
+	for (const song of storedSongs()) {
 		keep.add(new URL(song.clipUrl, location.href).href)
 		if (song.artUrl) { keep.add(new URL(song.artUrl, location.href).href) }
 	}
@@ -194,6 +249,12 @@ async function fetchWithTimeout(url: string, init: RequestInit, timeout = REQUES
 	}
 }
 
+async function getJson<T>(url: string): Promise<T> {
+	const response = await fetchWithTimeout(url, { method: 'GET' })
+	if (!response.ok) { throw new Error(`HTTP ${response.status}`) }
+	return await response.json() as T
+}
+
 async function postJson<T>(url: string, body: unknown): Promise<T> {
 	const response = await fetchWithTimeout(url, {
 		method: 'POST',
@@ -209,7 +270,7 @@ async function syncDecisions() {
 	const outbox = await promisify(store('outbox').getAll()) as OutboxEntry[]
 	const result = await postJson<{ removedKeys: string[]; stats: Stats }>('api/sync', {
 		decisions: outbox.map(({ songKey, status, decidedAt }) => ({ songKey, status, decidedAt })),
-		cachedKeys: queue.map(s => s.songKey),
+		cachedKeys: [...new Set([...queue, ...artistQueue].map(s => s.songKey))],
 	})
 
 	const outboxStore = store('outbox', 'readwrite')
@@ -218,18 +279,19 @@ async function syncDecisions() {
 
 	if (result.removedKeys.length > 0) {
 		const removed = new Set(result.removedKeys)
-		const current = queue[0]
-		const removedSongs = queue.filter(s => removed.has(s.songKey))
-		queue = queue.filter(s => !removed.has(s.songKey))
-		const queueStore = store('queue', 'readwrite')
-		for (const song of removedSongs) { queueStore.delete(song.songKey) }
+		const removedSongs = [...queue, ...artistQueue].filter(s => removed.has(s.songKey))
+		await removeFromQueues(removed)
 		for (const song of removedSongs) { await deleteMedia(song) }
-		if (current && removed.has(current.songKey)) { await showCurrent() }
+		if (shownSong && removed.has(shownSong.songKey)) { await showCurrent() }
 	}
 
-	stats = { ...result.stats, lastSyncAt: new Date().toISOString() }
-	await setMeta('stats', stats)
+	await saveStats(result.stats)
 	render()
+}
+
+async function saveStats(newStats: Stats) {
+	stats = { ...newStats, lastSyncAt: new Date().toISOString() }
+	await setMeta('stats', stats)
 }
 
 /** Downloads songs until `targetCount` are stored on the device. */
@@ -237,36 +299,41 @@ async function downloadSongs(targetCount: number, onProgress?: (done: number, to
 	const needed = targetCount - queue.length
 	if (needed <= 0) { return { added: 0, requested: 0 } }
 
-	const batch = await postJson<{ songs: BatchSong[]; stats: Stats }>('api/batch', {
+	const batch = await postJson<BatchResponse>('api/batch', {
 		count: needed,
 		exclude: queue.map(s => s.songKey),
 	})
-	stats = { ...batch.stats, lastSyncAt: new Date().toISOString() }
-	await setMeta('stats', stats)
+	await saveStats(batch.stats)
+	const added = await storeSongs(batch.songs, 'queue', onProgress)
+	return { added, requested: needed }
+}
 
+/** Downloads the media of `songs` and adds them to the end of a queue. */
+async function storeSongs(songs: BatchSong[], queueName: QueueName, onProgress?: (done: number, total: number) => void) {
 	let done = 0
 	let added = 0
 	let next = 0
-	const wasEmpty = queue.length === 0
 	await Promise.all(Array.from({ length: DOWNLOAD_CONCURRENCY }, async () => {
-		while (next < batch.songs.length) {
-			const song = batch.songs[next++]
+		while (next < songs.length) {
+			const song = songs[next++]
 			try {
 				await cacheMedia(song.clipUrl)
 				if (song.artUrl) { await cacheMedia(song.artUrl).catch(() => song.artUrl = null) }
-				const queued: QueuedSong = { ...song, order: maxOrder() + 1 }
-				queue.push(queued)
-				await promisify(store('queue', 'readwrite').put(queued))
-				added++
+				if (!queueOf(queueName).some(s => s.songKey === song.songKey)) {
+					const queued: QueuedSong = { ...song, order: maxOrder(queueOf(queueName)) + 1 }
+					queueOf(queueName).push(queued)
+					await promisify(store(queueName, 'readwrite').put(queued))
+					added++
+				}
 			} catch (err) {
 				console.warn('Failed to download', song.name, err)
 			}
-			onProgress?.(++done, batch.songs.length)
-			if (wasEmpty && added === 1) { await showCurrent() }
+			onProgress?.(++done, songs.length)
+			if (!shownSong && currentSong()) { await showCurrent() }
 			render()
 		}
 	}))
-	return { added, requested: needed }
+	return added
 }
 
 async function fullSync() {
@@ -286,6 +353,8 @@ async function fullSync() {
 			elements.syncStatus.textContent = `Downloading songs (${done} of ${total})...`
 		})
 		await pruneMedia()
+		await fetchArtists()
+		if (mode === 'artist') { refreshArtistQueue() }
 		elements.syncProgressFill.style.width = '100%'
 		const stillPreparing = result.added < result.requested && (stats?.pending ?? 0) > queue.length
 		elements.syncStatus.textContent = stillPreparing
@@ -309,6 +378,8 @@ function scheduleQuietSync(delay = 3000) {
 		try {
 			await syncDecisions()
 			if (queue.length < QUIET_TOP_UP_SIZE / 2) { await downloadSongs(QUIET_TOP_UP_SIZE) }
+			if (!pickerOpen) { await fetchArtists() } // Not while it would change the list under the user's finger
+			if (artistNotice === 'offline') { refreshArtistQueue() }
 		} catch {
 			// Offline; decisions stay in the outbox
 		} finally {
@@ -320,16 +391,58 @@ function scheduleQuietSync(delay = 3000) {
 
 // ---------- Review ----------
 
-function maxOrder() {
-	return queue.reduce((max, s) => Math.max(max, s.order), 0)
+function queueOf(name: QueueName) {
+	return name === 'artistQueue' ? artistQueue : queue
 }
 
-function minOrder() {
-	return queue.reduce((min, s) => Math.min(min, s.order), 0)
+function activeQueueName(): QueueName {
+	return mode === 'artist' ? 'artistQueue' : 'queue'
+}
+
+function artistSongs(artistKey: string) {
+	return artistQueue.filter(s => s.artistKeys?.includes(artistKey))
+}
+
+/** @returns the songs being reviewed right now, in order. */
+function activeSongs() {
+	if (mode === 'random') { return queue }
+	return selectedArtist ? artistSongs(selectedArtist.key) : []
+}
+
+function currentSong(): QueuedSong | undefined {
+	return pickerOpen ? undefined : activeSongs()[0]
+}
+
+/** @returns every song on the device, including decided ones that can still be undone. */
+function storedSongs() {
+	return [...queue, ...artistQueue, ...undoStack.map(u => u.song)]
+}
+
+function maxOrder(songs: QueuedSong[]) {
+	return songs.reduce((max, s) => Math.max(max, s.order), 0)
+}
+
+function minOrder(songs: QueuedSong[]) {
+	return songs.reduce((min, s) => Math.min(min, s.order), 0)
+}
+
+async function removeFromQueues(songKeys: Set<string>) {
+	queue = queue.filter(s => !songKeys.has(s.songKey))
+	artistQueue = artistQueue.filter(s => !songKeys.has(s.songKey))
+	const transaction = db.transaction(['queue', 'artistQueue'], 'readwrite')
+	for (const key of songKeys) {
+		transaction.objectStore('queue').delete(key)
+		transaction.objectStore('artistQueue').delete(key)
+	}
+	await new Promise<void>((resolve, reject) => {
+		transaction.oncomplete = () => resolve()
+		transaction.onerror = () => reject(transaction.error)
+	})
 }
 
 async function showCurrent() {
-	const song = queue[0]
+	const song = currentSong()
+	shownSong = song ?? null
 	currentObjectUrls.forEach(u => URL.revokeObjectURL(u))
 	currentObjectUrls = []
 	elements.audio.pause()
@@ -340,6 +453,8 @@ async function showCurrent() {
 	if (!song) {
 		elements.audio.removeAttribute('src')
 		render()
+		// Bridge knows whether the artist has more songs or is finished
+		if (mode === 'artist' && selectedArtist && !pickerOpen) { refreshArtistQueue() }
 		return
 	}
 
@@ -373,20 +488,20 @@ async function showCurrent() {
 }
 
 async function decide(status: 'keep' | 'skip') {
-	const song = queue[0]
+	const song = currentSong()
 	if (!song) { return }
 
 	const decision: Decision = { songKey: song.songKey, status, decidedAt: new Date().toISOString() }
 	await promisify(store('outbox', 'readwrite').add(decision))
-	await promisify(store('queue', 'readwrite').delete(song.songKey))
-	queue.shift()
+	await removeFromQueues(new Set([song.songKey])) // A song can be in both queues
 
-	undoStack.push({ song, status })
+	undoStack.push({ song, status, artist: mode === 'artist' ? selectedArtist : null })
 	if (undoStack.length > UNDO_LIMIT) {
 		const evicted = undoStack.shift()!
 		await deleteMedia(evicted.song)
 	}
 
+	updateArtistCounts(song, -1, status === 'keep' ? 1 : 0)
 	await refreshOutboxCount()
 	showToast(`${status === 'keep' ? 'Kept' : 'Skipped'} “${song.name}”`)
 	await animateOut(status === 'keep' ? 1 : -1)
@@ -395,11 +510,13 @@ async function decide(status: 'keep' | 'skip') {
 }
 
 async function later() {
-	const song = queue.shift()
+	const song = currentSong()
 	if (!song) { return }
-	song.order = maxOrder() + 1
-	queue.push(song)
-	await promisify(store('queue', 'readwrite').put(song))
+	const name = activeQueueName()
+	queueOf(name).splice(queueOf(name).indexOf(song), 1)
+	song.order = maxOrder(queueOf(name)) + 1
+	queueOf(name).push(song)
+	await promisify(store(name, 'readwrite').put(song))
 	await animateOut(0)
 	await showCurrent()
 }
@@ -409,13 +526,166 @@ async function undo() {
 	if (!last) { return }
 	const decision: Decision = { songKey: last.song.songKey, status: 'pending', decidedAt: new Date().toISOString() }
 	await promisify(store('outbox', 'readwrite').add(decision))
-	last.song.order = minOrder() - 1
-	queue.unshift(last.song)
-	await promisify(store('queue', 'readwrite').put(last.song))
+
+	const name: QueueName = last.artist ? 'artistQueue' : 'queue'
+	last.song.order = minOrder(queueOf(name)) - 1
+	queueOf(name).unshift(last.song)
+	await promisify(store(name, 'readwrite').put(last.song))
+
+	// Go back to where the decision was made, which brings back an artist if that decision finished them
+	mode = last.artist ? 'artist' : 'random'
+	if (last.artist) { selectedArtist = last.artist }
+	pickerOpen = false
+	artistNotice = null
+	updateArtistCounts(last.song, 1, last.status === 'keep' ? -1 : 0)
+	await saveModeState()
+
 	await refreshOutboxCount()
 	hideToast()
 	await showCurrent()
 	scheduleQuietSync()
+}
+
+// ---------- Artist mode ----------
+
+function saveModeState() {
+	return Promise.all([setMeta('mode', mode), setMeta('selectedArtist', selectedArtist)])
+}
+
+/** Keeps the artist list correct between syncs with Bridge, so that it's still right when offline. */
+function updateArtistCounts(song: QueuedSong, pendingChange: number, keptChange: number) {
+	for (const artist of new Set([...artists, ...(selectedArtist ? [selectedArtist] : [])])) {
+		if (song.artistKeys?.includes(artist.key)) {
+			artist.pendingCount = Math.max(0, artist.pendingCount + pendingChange)
+			artist.keptCount = Math.max(0, artist.keptCount + keptChange)
+		}
+	}
+	setMeta('artists', artists).catch(() => { /* Best effort */ })
+}
+
+async function fetchArtists() {
+	const result = await getJson<{ artists: Artist[]; stats: Stats }>('api/artists')
+	artists = result.artists
+	await setMeta('artists', artists)
+	const updatedSelection = artists.find(a => a.key === selectedArtist?.key)
+	if (updatedSelection) {
+		selectedArtist = updatedSelection
+		await setMeta('selectedArtist', selectedArtist)
+	}
+}
+
+/** @param messageIfNoArtists Shown when it turns out there are no artists to choose from, returning to random. */
+async function openPicker(messageIfNoArtists = 'Keep a song and its artists will show up here.') {
+	pickerOpen = true
+	elements.artistSearch.value = ''
+	await showCurrent()
+	renderArtists()
+
+	// Send decisions first so that a song kept moments ago counts
+	try {
+		await syncDecisions()
+		await fetchArtists()
+		artistsReachable = true
+	} catch {
+		artistsReachable = false
+	}
+	if (!pickerOpen) { return }
+
+	if (artistsReachable && artists.length === 0) {
+		await switchToRandom()
+		showToast(messageIfNoArtists, undoStack.length > 0)
+	} else {
+		renderArtists()
+	}
+}
+
+async function closePicker() {
+	pickerOpen = false
+	if (mode === 'artist' && !selectedArtist) {
+		mode = 'random'
+		await saveModeState()
+	}
+	await showCurrent()
+}
+
+async function switchToRandom() {
+	if (mode === 'random' && !pickerOpen) { return }
+	clearTimeout(artistPollTimer)
+	mode = 'random'
+	pickerOpen = false
+	artistNotice = null
+	await saveModeState()
+	await showCurrent()
+}
+
+async function onArtistButton() {
+	if (pickerOpen) {
+		await closePicker()
+	} else if (mode === 'random' && selectedArtist) {
+		await selectArtist(selectedArtist) // Pick up where they left off; pressing it again changes artist
+	} else {
+		await openPicker()
+	}
+}
+
+async function selectArtist(artist: Artist) {
+	selectedArtist = artist
+	mode = 'artist'
+	pickerOpen = false
+	artistNotice = null
+	await saveModeState()
+	await showCurrent()
+	refreshArtistQueue()
+}
+
+/**
+ * Downloads the selected artist's songs. Bridge makes their clips on demand, so this repeats while more are on the way.
+ * If Bridge has no more of their songs to review and none are left on the device, the artist is finished.
+ */
+async function refreshArtistQueue() {
+	clearTimeout(artistPollTimer)
+	const artist = selectedArtist
+	if (mode !== 'artist' || !artist || artistRequest === artist.key) { return }
+
+	artistRequest = artist.key
+	if (!currentSong()) {
+		artistNotice = 'loading'
+		render()
+	}
+	try {
+		await syncDecisions()
+		const batch = await postJson<BatchResponse>('api/batch', {
+			artist: artist.key,
+			count: ARTIST_BATCH_SIZE,
+			exclude: artistSongs(artist.key).map(s => s.songKey),
+		})
+		await saveStats(batch.stats)
+		await storeSongs(batch.songs, 'artistQueue')
+		if (selectedArtist?.key !== artist.key || mode !== 'artist') { return }
+
+		const pending = batch.artistPending ?? 0
+		const onDevice = artistSongs(artist.key).length
+		selectedArtist.pendingCount = pending
+		artistNotice = pending > onDevice ? 'preparing' : null
+		if (artistNotice === 'preparing') {
+			artistPollTimer = window.setTimeout(() => refreshArtistQueue(), ARTIST_POLL_MS)
+		} else if (onDevice === 0) {
+			await finishArtist(artist)
+		}
+	} catch {
+		if (selectedArtist?.key === artist.key) { artistNotice = 'offline' }
+	} finally {
+		if (artistRequest === artist.key) { artistRequest = null }
+		render()
+	}
+}
+
+async function finishArtist(artist: Artist) {
+	selectedArtist = null
+	artistNotice = null
+	await saveModeState()
+	showToast(`Finished ${artist.name}`)
+	await openPicker('That was the last of the artists you liked, so you’re back to random.')
 }
 
 function animateOut(direction: -1 | 0 | 1) {
@@ -436,31 +706,92 @@ async function refreshOutboxCount() {
 }
 
 function render() {
-	const hasSong = queue.length > 0
+	const readyCount = activeSongs().length
+	const hasSong = currentSong() !== undefined
 	elements.card.hidden = !hasSong
-	elements.empty.hidden = hasSong
+	elements.artistPicker.hidden = !pickerOpen
+	elements.empty.hidden = hasSong || pickerOpen
+	elements.actions.hidden = pickerOpen
 	elements.keep.disabled = elements.skip.disabled = elements.later.disabled = !hasSong
 	elements.undo.disabled = undoStack.length === 0
-	elements.offlineCount.textContent = `${queue.length.toLocaleString()} song${queue.length === 1 ? '' : 's'} ready`
+	elements.modeRandom.classList.toggle('active', mode === 'random' && !pickerOpen)
+	elements.modeArtist.classList.toggle('active', mode === 'artist' || pickerOpen)
+	elements.modeArtistLabel.textContent = selectedArtist?.name ?? 'Artists'
+	elements.offlineCount.textContent = `${readyCount.toLocaleString()} song${readyCount === 1 ? '' : 's'} ready`
 	elements.outboxBadge.hidden = outboxCount === 0
 	elements.outboxBadge.textContent = `${outboxCount}`
 
 	if (stats) {
-		elements.serverCount.textContent = `${stats.pending.toLocaleString()} left to review · ${stats.keep.toLocaleString()} kept`
+		const remaining = mode === 'artist' && selectedArtist
+			? `${selectedArtist.pendingCount.toLocaleString()} left by this artist`
+			: `${stats.pending.toLocaleString()} left to review`
+		elements.serverCount.textContent = `${remaining} · ${stats.keep.toLocaleString()} kept`
 			+ (stats.lastSyncAt ? ` · synced ${timeAgo(stats.lastSyncAt)}` : '')
 	}
 
-	if (!hasSong) {
-		const allDone = stats !== null && stats.pending === 0
-		elements.emptyTitle.textContent = allDone ? 'All caught up!' : 'No songs on this device'
-		elements.emptyBody.textContent = allDone
-			? 'Every song has been reviewed. New charts appear here after Bridge syncs with Chorus.'
-			: 'Connect to your PC (through Tailscale) and download a batch of songs to review.'
-	}
+	if (!hasSong) { renderEmptyState() }
 }
 
-function showToast(text: string) {
+function renderEmptyState() {
+	const artist = mode === 'artist' ? selectedArtist : null
+	elements.emptyArtists.hidden = !artist
+	elements.emptySync.hidden = artist !== null && artistNotice !== 'offline'
+
+	if (artist) {
+		const isOffline = artistNotice === 'offline'
+		elements.emptyTitle.textContent = isOffline ? `No more ${artist.name} songs on this device` : `Getting ${artist.name} ready`
+		elements.emptyBody.textContent = isOffline
+			? 'Connect to your PC (through Tailscale) to download more of their songs, or choose another artist.'
+			: artistNotice === 'preparing'
+				? 'Bridge is making preview clips for this artist. The first one will start as soon as it’s ready.'
+				: 'Checking Bridge for songs by this artist.'
+		return
+	}
+
+	const allDone = stats !== null && stats.pending === 0
+	elements.emptyTitle.textContent = allDone ? 'All caught up!' : 'No songs on this device'
+	elements.emptyBody.textContent = allDone
+		? 'Every song has been reviewed. New charts appear here after Bridge syncs with Chorus.'
+		: 'Connect to your PC (through Tailscale) and download a batch of songs to review.'
+}
+
+function renderArtists() {
+	const search = elements.artistSearch.value.trim().toLowerCase()
+	const available = artists.filter(a => a.pendingCount > 0)
+	const visible = available.filter(a => a.name.toLowerCase().includes(search))
+	elements.artistList.replaceChildren(...visible.map(createArtistRow))
+
+	const hint = !artistsReachable
+		? (available.length > 0 ? 'Can’t reach Bridge, so this is your last synced list. Only downloaded songs will play.' : 'Connect to Bridge to load your artists.')
+		: visible.length === 0 && available.length > 0 ? 'No artists match your search.' : ''
+	elements.artistHint.textContent = hint
+	elements.artistHint.hidden = !hint
+}
+
+function createArtistRow(artist: Artist) {
+	const row = document.createElement('button')
+	row.type = 'button'
+	row.className = 'artist-row'
+	row.classList.toggle('current', artist.key === selectedArtist?.key)
+
+	const name = document.createElement('span')
+	name.className = 'artist-name'
+	name.textContent = artist.name
+
+	const downloaded = artistSongs(artist.key).length
+	const details = document.createElement('span')
+	details.className = 'artist-details'
+	details.textContent = `${artist.pendingCount.toLocaleString()} to review · ${artist.keptCount.toLocaleString()} kept`
+		+ (downloaded > 0 ? ` · ${downloaded.toLocaleString()} downloaded` : '')
+
+	row.append(name, details)
+	row.addEventListener('click', () => selectArtist(artist))
+	return row
+}
+
+function showToast(text: string, canUndo = true) {
 	elements.toastText.textContent = text
+	elements.toastUndo.hidden = !canUndo
 	elements.toast.hidden = false
 	clearTimeout(toastTimer)
 	toastTimer = window.setTimeout(hideToast, 3500)
@@ -535,7 +866,11 @@ function setUpControls() {
 	elements.skip.addEventListener('click', () => decide('skip'))
 	elements.later.addEventListener('click', () => later())
 	elements.undo.addEventListener('click', () => undo())
-	$('toast-undo').addEventListener('click', () => undo())
+	elements.toastUndo.addEventListener('click', () => undo())
+	elements.modeRandom.addEventListener('click', () => switchToRandom())
+	elements.modeArtist.addEventListener('click', () => onArtistButton())
+	elements.emptyArtists.addEventListener('click', () => openPicker())
+	elements.artistSearch.addEventListener('input', () => renderArtists())
 	elements.play.addEventListener('click', () => {
 		if (elements.audio.paused) {
 			elements.audio.play().catch(() => { /* Ignore */ })
@@ -548,17 +883,27 @@ function setUpControls() {
 		elements.syncDialog.showModal()
 	}
 	$('open-sync').addEventListener('click', openSync)
-	$('empty-sync').addEventListener('click', openSync)
+	elements.emptySync.addEventListener('click', openSync)
 	elements.syncNow.addEventListener('click', () => fullSync())
 	$('clear-data').addEventListener('click', async () => {
 		if (outboxCount > 0 && !confirm(`${outboxCount} decisions haven't been sent to Bridge yet and will be lost. Continue?`)) { return }
 		if (outboxCount === 0 && !confirm('Remove all downloaded songs from this phone?')) { return }
 		queue = []
+		artistQueue = []
 		undoStack = []
 		await promisify(store('queue', 'readwrite').clear())
+		await promisify(store('artistQueue', 'readwrite').clear())
 		await promisify(store('outbox', 'readwrite').clear())
 		if (mediaCacheAvailable) { await caches.delete(MEDIA_CACHE) }
 		await refreshOutboxCount()
+
+		// Otherwise artist mode would immediately download the songs again
+		clearTimeout(artistPollTimer)
+		mode = 'random'
+		selectedArtist = null
+		pickerOpen = false
+		artistNotice = null
+		await saveModeState()
 		await showCurrent()
 	})
 
@@ -572,6 +917,10 @@ function setUpControls() {
 
 	document.addEventListener('keydown', event => {
 		if (elements.syncDialog.open) { return }
+		if (pickerOpen) {
+			if (event.key === 'Escape') { closePicker() }
+			return
+		}
 		switch (event.key) {
 			case 'ArrowRight': decide('keep'); break
 			case 'ArrowLeft': decide('skip'); break
@@ -601,7 +950,11 @@ async function start() {
 
 	db = await openDb()
 	queue = (await promisify(store('queue').getAll()) as QueuedSong[]).sort((a, b) => a.order - b.order)
+	artistQueue = (await promisify(store('artistQueue').getAll()) as QueuedSong[]).sort((a, b) => a.order - b.order)
 	stats = await getMeta<Stats>('stats')
+	artists = await getMeta<Artist[]>('artists') ?? []
+	selectedArtist = await getMeta<Artist>('selectedArtist')
+	mode = selectedArtist ? await getMeta<ReviewMode>('mode') ?? 'random' : 'random'
 	const batchSize = await getMeta<number>('batchSize')
 	if (batchSize) { elements.batchSize.value = `${batchSize}` }
 	await refreshOutboxCount()
@@ -609,6 +962,7 @@ async function start() {
 	setUpSwipe()
 	setUpControls()
 	await showCurrent()
+	if (mode === 'artist') { refreshArtistQueue() }
 	scheduleQuietSync(500)
 }
 

@@ -29,6 +29,14 @@
 		</button>
 	</header>
 
+	<nav class="mode-switch" aria-label="Review order">
+		<button id="mode-random" class="mode-button" type="button" title="Review songs in random order">Random</button>
+		<button id="mode-artist" class="mode-button" type="button" title="Review the songs of an artist you've liked">
+			<span id="mode-artist-label">Artists</span>
+			<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 9 6 6 6-6" /></svg>
+		</button>
+	</nav>
+
 	<main class="stage">
 		<article id="card" class="card" hidden>
 			<div class="art-wrap">
@@ -56,11 +64,21 @@
 			<div class="empty-icon">♪</div>
 			<h1 id="empty-title">No songs on this device</h1>
 			<p id="empty-body">Connect to your PC (through Tailscale) and download a batch of songs to review.</p>
-			<button id="empty-sync" class="primary-button">Sync &amp; download songs</button>
+			<div class="empty-actions">
+				<button id="empty-sync" class="primary-button">Sync &amp; download songs</button>
+				<button id="empty-artists" class="secondary-button" hidden>Choose another artist</button>
+			</div>
+		</section>
+
+		<section id="artist-picker" class="artist-picker" hidden>
+			<h1>Artists you've liked</h1>
+			<input id="artist-search" class="artist-search" type="search" placeholder="Search artists" aria-label="Search artists" autocomplete="off" />
+			<p id="artist-hint" class="muted" hidden></p>
+			<div id="artist-list" class="artist-list"></div>
 		</section>
 	</main>
 
-	<footer class="actions">
+	<footer id="actions" class="actions">
 		<button id="skip" class="action skip" title="Skip (←)" aria-label="Skip">
 			<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M17 14V2M9 18.1 10 14H4.2a2 2 0 0 1-1.9-2.5l2.3-8A2 2 0 0 1 6.5 2H17v12l-4.5 8.6a1.9 1.9 0 0 1-3.5-1.5z" /></svg>
 		</button>

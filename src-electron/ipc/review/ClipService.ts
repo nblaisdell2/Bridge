@@ -24,6 +24,8 @@ const PROGRESS_INTERVAL_MS = 1000
 
 let runningBuffer: Promise<void> | null = null
 let requestedReadyCount = 0
+/** The artist being reviewed in artist mode, whose clips are made before the regular buffer */
+let priorityArtist: string | null = null
 let abortController = new AbortController()
 
 /** @returns the path to the bundled ffmpeg binary (unpacked from the asar archive in production). */
@@ -46,9 +48,16 @@ export function ensureClipBuffer(onProgress: (progress: ReviewProgress) => void,
 		runningBuffer = fillBuffer(onProgress).finally(() => {
 			runningBuffer = null
 			requestedReadyCount = 0
+			priorityArtist = null
 		})
 	}
 	return runningBuffer
+}
+
+/** Makes clips for all of an artist's pending songs, ahead of the regular buffer. Replaces any previous priority artist. */
+export function prioritizeArtistClips(onProgress: (progress: ReviewProgress) => void, artistKey: string) {
+	priorityArtist = artistKey
+	return ensureClipBuffer(onProgress)
 }
 
 /** Stops clip generation (used when Bridge quits). */
@@ -66,6 +75,11 @@ async function fillBuffer(onProgress: (progress: ReviewProgress) => void) {
 	const reportProgress = (force = false) => {
 		if (!force && Date.now() - lastProgressAt < PROGRESS_INTERVAL_MS) { return }
 		lastProgressAt = Date.now()
+		if (priorityArtist) {
+			const { pending, ready } = db.getArtistQueueCounts(priorityArtist)
+			onProgress({ kind: 'clips', message: `Preparing clips for the artist you're reviewing (${ready} of ${pending} ready)`, done: ready, total: pending })
+			return
+		}
 		const ready = db.countReadyClips()
 		onProgress({
 			kind: 'clips',
@@ -75,17 +89,26 @@ async function fillBuffer(onProgress: (progress: ReviewProgress) => void) {
 		})
 	}
 
+	const getNextSongs = () => {
+		if (priorityArtist) {
+			const artistSongs = db.getArtistSongsNeedingClips(priorityArtist, 20, MAX_CLIP_ATTEMPTS)
+			if (artistSongs.length > 0) { return artistSongs }
+			priorityArtist = null
+		}
+		const missing = requestedReadyCount - db.countReadyClips()
+		return missing > 0 ? db.getSongsNeedingClips(Math.min(missing, 20), MAX_CLIP_ATTEMPTS) : []
+	}
+
 	const signal = abortController.signal
 	while (!signal.aborted) {
-		const missing = requestedReadyCount - db.countReadyClips()
-		if (missing <= 0) { break }
-
-		const songs = db.getSongsNeedingClips(Math.min(missing, 20), MAX_CLIP_ATTEMPTS)
+		const songs = getNextSongs()
 		if (songs.length === 0) { break }
 
+		// A newly selected artist shouldn't have to wait for the rest of this group of clips
+		const songsArtist = priorityArtist
 		let next = 0
 		await Promise.all(Array.from({ length: CLIP_CONCURRENCY }, async () => {
-			while (next < songs.length && !signal.aborted) {
+			while (next < songs.length && !signal.aborted && priorityArtist === songsArtist) {
 				const song = songs[next++]
 				const chart = song.bestMd5 ? db.getChart(song.bestMd5) : null
 				if (!chart) {

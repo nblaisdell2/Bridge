@@ -64,6 +64,7 @@ Chorus Encore has tens of thousands of charts, and finding the ones you want by 
 - **Downloads:** when you keep a song, Bridge downloads the best chart for it through the normal download queue: reviewed drums first, then pro drums, then fewest chart issues, most instruments, and newest. Downloads go to your default library folder using your folder-name setting.
 - **New charts:** Bridge checks Chorus for new charts when it starts and once a day while it's open. New songs are placed at the front of your review queue, ahead of the backlog.
 - **Songs you already have:** after you scan your library in the Library tab, click **Skip songs already in my library** in the Review tab to mark matching songs as owned so they never come up.
+- **Random and artist mode:** the player reviews songs in random order by default. Tap **Artists** to pick an artist you've kept at least one song by and review only their songs. Everyone credited on a song you keep gets their own entry, including featured artists. An artist leaves the list once all their songs are reviewed, and when no artists are left the player goes back to random. You can switch between the two at any time. Artist mode downloads an artist's songs when you pick them, so choosing a new artist needs a connection to Bridge; once downloaded, their songs can be reviewed offline.
 
 **Using it on your PC**
 

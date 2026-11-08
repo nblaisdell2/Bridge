@@ -8,14 +8,17 @@ import Database from 'better-sqlite3'
 import * as path from 'path'
 
 import {
-	ReviewDecision, ReviewDownloadStatus, ReviewSong, ReviewSongFilter, ReviewSongPage, ReviewStats,
+	ReviewArtist, ReviewDecision, ReviewDownloadStatus, ReviewSong, ReviewSongFilter, ReviewSongPage, ReviewStats,
 } from '../../../src-shared/interfaces/review.interface.js'
 import { ChartData } from '../../../src-shared/interfaces/search.interface.js'
 import { dataPath } from '../../../src-shared/Paths.js'
 import { getSongKey, rankCharts } from '../../../src-shared/ReviewUtils.js'
+import { ArtistIndex, buildArtistIndex, CreditedSong } from './ArtistCredits.js'
 
 class ReviewDatabase {
 	private db: Database.Database
+	/** Built on first use; depends on the whole catalog, so it's discarded whenever charts change */
+	private artistIndex: ArtistIndex | null = null
 
 	constructor() {
 		this.db = new Database(path.join(dataPath, 'review.db'))
@@ -125,6 +128,7 @@ class ReviewDatabase {
 			}
 		})
 		run()
+		this.artistIndex = null
 		return createdCount
 	}
 
@@ -253,6 +257,78 @@ class ReviewDatabase {
       ORDER BY queue_order LIMIT ?
     `).all(maxAttempts, limit) as Record<string, unknown>[]
 		return rows.map(r => this.rowToSong(r))
+	}
+
+	private getArtistIndex() {
+		if (!this.artistIndex) {
+			const songs = this.db.prepare('SELECT song_key AS songKey, artist, name FROM songs').all() as CreditedSong[]
+			this.artistIndex = buildArtistIndex(songs)
+		}
+		return this.artistIndex
+	}
+
+	/** @returns a JSON array of an artist's song keys, for use with `json_each`. */
+	private getArtistSongKeysJson(artistKey: string) {
+		return JSON.stringify(this.getArtistIndex().songsByArtist.get(artistKey) ?? [])
+	}
+
+	/** @returns the keys of every artist credited on a song. */
+	getArtistKeys(songKey: string) {
+		return this.getArtistIndex().artistsBySong.get(songKey) ?? []
+	}
+
+	/**
+	 * @returns the artists with at least one kept song and at least one song left to review, most kept first.
+	 * Songs whose clip couldn't be generated can never be reviewed, so they don't count as left to review.
+	 */
+	getLikedArtists(): ReviewArtist[] {
+		const index = this.getArtistIndex()
+		const rows = this.db.prepare(`
+      SELECT song_key, status FROM songs WHERE status = 'keep' OR (status = 'pending' AND clip_status != 'failed')
+    `).all() as { song_key: string; status: string }[]
+
+		const counts = new Map<string, { kept: number; pending: number }>()
+		for (const row of rows) {
+			for (const key of index.artistsBySong.get(row.song_key) ?? []) {
+				const count = counts.get(key) ?? { kept: 0, pending: 0 }
+				if (row.status === 'keep') { count.kept++ } else { count.pending++ }
+				counts.set(key, count)
+			}
+		}
+
+		return [...counts]
+			.filter(([, count]) => count.kept > 0 && count.pending > 0)
+			.map(([key, count]) => ({ key, name: index.artistNames.get(key) ?? key, keptCount: count.kept, pendingCount: count.pending }))
+			.sort((a, b) => b.keptCount - a.keptCount || a.name.localeCompare(b.name))
+	}
+
+	/** @returns an artist's pending songs in review order that have a clip ready. */
+	getArtistReviewBatch(artistKey: string, count: number, excludeKeys: string[]): ReviewSong[] {
+		const exclude = new Set(excludeKeys)
+		const rows = this.db.prepare(`
+      SELECT * FROM songs
+      WHERE song_key IN (SELECT value FROM json_each(?)) AND status = 'pending' AND clip_status = 'ready'
+      ORDER BY queue_order LIMIT ?
+    `).all(this.getArtistSongKeysJson(artistKey), count + exclude.size) as Record<string, unknown>[]
+		return rows.map(r => this.rowToSong(r)).filter(s => !exclude.has(s.songKey)).slice(0, count)
+	}
+
+	/** @returns an artist's pending songs in review order that still need a clip. */
+	getArtistSongsNeedingClips(artistKey: string, limit: number, maxAttempts: number): ReviewSong[] {
+		const rows = this.db.prepare(`
+      SELECT * FROM songs
+      WHERE song_key IN (SELECT value FROM json_each(?)) AND status = 'pending' AND clip_status != 'ready' AND clip_attempts < ?
+      ORDER BY queue_order LIMIT ?
+    `).all(this.getArtistSongKeysJson(artistKey), maxAttempts, limit) as Record<string, unknown>[]
+		return rows.map(r => this.rowToSong(r))
+	}
+
+	/** @returns how many of an artist's songs are left to review, and how many of those have a clip ready. */
+	getArtistQueueCounts(artistKey: string) {
+		return this.db.prepare(`
+      SELECT COUNT(*) AS pending, COALESCE(SUM(clip_status = 'ready'), 0) AS ready FROM songs
+      WHERE song_key IN (SELECT value FROM json_each(?)) AND status = 'pending' AND clip_status != 'failed'
+    `).get(this.getArtistSongKeysJson(artistKey)) as { pending: number; ready: number }
 	}
 
 	countReadyClips(): number {

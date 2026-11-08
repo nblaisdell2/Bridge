@@ -1,6 +1,6 @@
 // Bridge Review service worker: lets the phone app open and play downloaded songs with no connection.
 
-const SHELL_CACHE = 'bridge-review-shell-v1'
+const SHELL_CACHE = 'bridge-review-shell-v2'
 const MEDIA_CACHE = 'bridge-review-media' // Filled by app.js when songs are downloaded
 const SHELL_FILES = ['./', 'index.html', 'app.js', 'styles.css', 'manifest.webmanifest', 'icon-256.png', 'icon-512.png']
 

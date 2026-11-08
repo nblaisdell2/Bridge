@@ -11,7 +11,9 @@ import { createServer, IncomingMessage, Server, ServerResponse } from 'http'
 import * as path from 'path'
 import * as url from 'url'
 
-import { ReviewBatchResponse, ReviewBatchSong, ReviewDecision, ReviewSong } from '../../../src-shared/interfaces/review.interface.js'
+import {
+	ReviewArtistsResponse, ReviewBatchResponse, ReviewBatchSong, ReviewDecision, ReviewSong,
+} from '../../../src-shared/interfaces/review.interface.js'
 import { dataPath } from '../../../src-shared/Paths.js'
 import { getClipFilePath } from './ClipService.js'
 import { getReviewDb } from './ReviewDatabase.js'
@@ -39,6 +41,8 @@ export interface ReviewServerHooks {
 	onDecisions: (changed: ReviewSong[]) => void
 	/** Called when the phone asks for more songs than have clips ready */
 	onNeedClips: (readyCount: number) => void
+	/** Called when the phone asks for an artist with songs that don't have clips yet */
+	onNeedArtistClips: (artistKey: string) => void
 }
 
 let server: Server | null = null
@@ -80,10 +84,27 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse, hooks: R
 		return sendJson(res, 200, db.getStats())
 	}
 
+	if (pathname === '/api/artists' && req.method === 'GET') {
+		const response: ReviewArtistsResponse = { artists: db.getLikedArtists(), stats: db.getStats() }
+		return sendJson(res, 200, response)
+	}
+
 	if (pathname === '/api/batch' && req.method === 'POST') {
-		const body = await readJson<{ count?: number; exclude?: string[] }>(req)
+		const body = await readJson<{ count?: number; exclude?: string[]; artist?: string }>(req)
 		const count = Math.max(1, Math.min(MAX_BATCH_SIZE, Math.floor(body.count ?? 50)))
 		const exclude = Array.isArray(body.exclude) ? body.exclude.filter(k => typeof k === 'string') : []
+
+		if (typeof body.artist === 'string') {
+			const { pending, ready } = db.getArtistQueueCounts(body.artist)
+			if (ready < pending) { hooks.onNeedArtistClips(body.artist) }
+			const response: ReviewBatchResponse = {
+				songs: db.getArtistReviewBatch(body.artist, count, exclude).map(toBatchSong),
+				stats: db.getStats(),
+				artistPending: pending,
+			}
+			return sendJson(res, 200, response)
+		}
+
 		const songs = db.getReviewBatch(count, exclude)
 		if (songs.length < count) {
 			hooks.onNeedClips(count + exclude.length)
@@ -143,6 +164,7 @@ function toBatchSong(song: ReviewSong): ReviewBatchSong {
 		charters: song.charters,
 		clipUrl: `/api/clip/${song.clipMd5}.mp3`,
 		artUrl: song.albumArtMd5 ? `/api/art/${song.albumArtMd5}.jpg` : null,
+		artistKeys: getReviewDb().getArtistKeys(song.songKey),
 	}
 }
 

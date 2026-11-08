@@ -96,9 +96,24 @@ export interface ReviewBatchSong {
 	charters: string
 	clipUrl: string
 	artUrl: string | null
+	artistKeys: string[]        // Every artist credited on the song
 }
 
 export interface ReviewBatchResponse {
 	songs: ReviewBatchSong[]
+	stats: ReviewStats
+	artistPending?: number      // In an artist's batch: their songs left to review, including any without a clip yet
+}
+
+/** An artist the user has kept at least one song by, who still has songs to review. */
+export interface ReviewArtist {
+	key: string
+	name: string
+	keptCount: number
+	pendingCount: number
+}
+
+export interface ReviewArtistsResponse {
+	artists: ReviewArtist[]
 	stats: ReviewStats
 }

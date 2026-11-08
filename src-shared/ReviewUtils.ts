@@ -8,7 +8,7 @@ export function getSongKey(artist: string | null, name: string | null) {
 	return `${normalizeSongText(artist)}|${normalizeSongText(name)}`
 }
 
-function normalizeSongText(text: string | null) {
+export function normalizeSongText(text: string | null) {
 	return (text ?? '')
 		.normalize('NFKC')
 		.replace(/<[^>]*>/g, '') // Clone Hero color/formatting tags
