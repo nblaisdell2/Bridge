@@ -8,7 +8,6 @@ import { IpcFromMainEmitEvents } from '../src-shared/interfaces/ipc.interface.js
 import { dataPath } from '../src-shared/Paths.js'
 import { initReview, shutdownReview } from './ipc/review/ReviewHandler.ipc.js'
 import { settings } from './ipc/SettingsHandler.ipc.js'
-import { retryUpdate } from './ipc/UpdateHandler.ipc.js'
 import { getIpcInvokeHandlers, getIpcToMainEmitHandlers } from './IpcHandler.js'
 
 electronUnhandled({ showDialog: true, logger: err => console.log('Error: Unhandled Rejection:', err) })
@@ -24,9 +23,7 @@ restrictToSingleInstance()
 handleOSXWindowClosed()
 app.on('ready', async () => {
 	createBridgeWindow()
-	if (!isDevBuild) {
-		retryUpdate()
-	}
+	// No automatic update check: updates come from the original Bridge's releases, and installing one would replace this fork
 })
 app.on('before-quit', () => shutdownReview())
 

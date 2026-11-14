@@ -130,3 +130,20 @@ The phone app is a web app that Bridge serves from your PC. Phones only let a we
 ```
 $ npm run build:review-web
 ```
+
+**Installing this fork on Windows**
+
+To use this fork like the regular Bridge app (Start menu entry, taskbar pin) instead of running `npm start`, close Bridge, then build the installer and run it:
+
+```
+$ npm run build:windows -- --publish never
+$ release\Bridge-Setup-<version>.exe /S --updated
+```
+
+It installs silently over the original Bridge in `%LOCALAPPDATA%\Programs\Bridge`, so the Start menu and taskbar open this version. Run both commands again after pulling or making changes. Keep the `--updated` flag: without it the installer recreates the shortcuts, which unpins Bridge from the taskbar. Your data is kept either way.
+
+The installed app keeps its data in `%APPDATA%\Bridge\bridge_data`; `npm start` uses `%APPDATA%\Electron\bridge_data` instead, so testing in development doesn't touch your real library or review progress.
+
+If packaging fails with `Cannot create symbolic link : A required privilege is not held by the client`, electron-builder couldn't unpack its signing tools (two macOS symlinks in the archive need Windows Developer Mode). Either turn on Developer Mode, or rename one of the numbered folders it left in `%LOCALAPPDATA%\electron-builder\Cache\winCodeSign` to `winCodeSign-2.6.0` and run the build again.
+
+The installed fork doesn't check for updates on startup, since updates come from the original project's releases and installing one would replace this fork.
